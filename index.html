@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cTrader DCA cBot 参数优化计算器</title>
+    <link rel="stylesheet" href="css/main.css">
+    <!-- ECharts 图表库 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <main class="container">
+            <div class="input-section">
+                <h2>🎛️ cBot参数配置</h2>
+                <p class="config-note">💡 基于标准化分析，专注于DCA策略参数优化</p>
+                
+
+                <div class="input-group">
+                    <label for="pipStep">DCA间距 (点数)</label>
+                    <input 
+                        type="number" 
+                        id="pipStep"
+                        v-model.number="inputParams.pipStep"
+                        placeholder="15"
+                        min="1"
+                        max="1000"
+                    >
+                </div>
+
+                <div class="input-group">
+                    <label for="firstVolume">首次仓位手数</label>
+                    <input 
+                        type="number" 
+                        id="firstVolume"
+                        v-model.number="inputParams.firstVolume"
+                        placeholder="0.01"
+                        step="0.01"
+                        min="0.01"
+                    >
+                </div>
+
+                <div class="input-group">
+                    <label for="volumeExponent">仓位倍数指数</label>
+                    <input 
+                        type="number" 
+                        id="volumeExponent"
+                        v-model.number="inputParams.volumeExponent"
+                        placeholder="1.5"
+                        step="0.1"
+                        min="0.1"
+                        max="5.0"
+                    >
+                </div>
+
+                <div class="input-group">
+                    <label for="maxPositions">最大仓位数</label>
+                    <input 
+                        type="number" 
+                        id="maxPositions"
+                        v-model.number="inputParams.maxPositions"
+                        placeholder="10"
+                        min="1"
+                        max="50"
+                    >
+                </div>
+
+                <div class="input-group">
+                    <label for="maxDrawdownPips">预期最大回撤 (点数)</label>
+                    <input 
+                        type="number" 
+                        id="maxDrawdownPips"
+                        v-model.number="inputParams.maxDrawdownPips"
+                        placeholder="500"
+                        min="10"
+                        max="10000"
+                    >
+                </div>
+
+                <div class="input-group">
+                    <label for="pipValue">每点价值 (USD)</label>
+                    <input 
+                        type="number" 
+                        id="pipValue"
+                        v-model.number="inputParams.pipValue"
+                        placeholder="1.0"
+                        step="0.1"
+                        min="0.1"
+                        max="100"
+                    >
+                </div>
+
+                <button class="calculate-btn" @click="calculateDCA" :disabled="isCalculating">
+                    {{ isCalculating ? '计算中...' : '🔥 分析风险' }}
+                </button>
+
+                <!-- 调试功能切换 -->
+                <button class="debug-toggle-btn" @click="toggleDebugPanel" 
+                        :class="{ 'active': showDebugPanel }"
+                        title="开启调试面板可查看详细计算过程">
+                    🔧 {{ showDebugPanel ? '关闭' : '开启' }}调试模式
+                </button>
+
+                <div v-if="errorMessage" class="error-message">
+                    ⚠️ {{ errorMessage }}
+                </div>
+            </div>
+
+            <div class="result-section">
+                <h2>📊 分析结果</h2>
+                
+                <!-- 关键指标卡片 -->
+                <div v-if="calculationResults.totalVolume > 0" class="result-cards">
+                    <div class="result-card">
+                        <h3>总交易手数</h3>
+                        <p class="result-value">{{ formatVolume(calculationResults.totalVolume) }}</p>
+                    </div>
+
+                    <div class="result-card risk-card">
+                        <h3>最大可能亏损</h3>
+                        <p class="result-value loss">{{ formatCurrency(calculationResults.riskMetrics.maxPossibleLoss) }}</p>
+                    </div>
+
+                    <div class="result-card">
+                        <h3>回本所需点数</h3>
+                        <p class="result-value">{{ formatPips(calculationResults.riskMetrics.breakEvenPips) }}</p>
+                    </div>
+
+                    <div class="result-card">
+                        <h3>保证金占用 (30x杠杆)</h3>
+                        <p class="result-value">{{ formatCurrency(calculationResults.riskMetrics.marginRequired) }}</p>
+                    </div>
+
+                    <div class="result-card">
+                        <h3>仓位放大倍数</h3>
+                        <p class="result-value">{{ calculationResults.riskMetrics.positionSizeRisk.toFixed(1) }}x</p>
+                    </div>
+                </div>
+
+                <!-- 风险建议 -->
+                <div v-if="riskAdvice" class="advice-section">
+                    <h3>💡 风险建议</h3>
+                    <div class="advice-content">{{ riskAdvice }}</div>
+                </div>
+
+                <!-- 仓位详情表格 -->
+                <div v-if="calculationResults.positions && calculationResults.positions.length > 0" class="positions-table-container">
+                    <h3>📋 仓位构建详情</h3>
+                    <div class="table-responsive">
+                        <table class="positions-table">
+                            <thead>
+                                <tr>
+                                    <th>层级</th>
+                                    <th>入场价格</th>
+                                    <th>手数</th>
+                                    <th>距离起始 (点)</th>
+                                    <th>累计手数</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="position in calculationResults.positions" :key="position.level">
+                                    <td>{{ position.level }}</td>
+                                    <td>{{ formatPrice(position.entryPrice) }}</td>
+                                    <td>{{ formatVolume(position.volume) }}</td>
+                                    <td>{{ position.pipDistance }}</td>
+                                    <td>{{ formatVolume(position.cumulativeVolume) }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 详细分析导航区域 -->
+                <div v-if="calculationResults.totalVolume > 0" class="analysis-navigation">
+                    <button class="detailed-analysis-btn" @click="toggleDebugPanel" title="打开调试面板查看详细回撤风险分析图表">
+                        📈 查看详细回撤分析
+                    </button>
+                </div>
+
+                <div v-else class="placeholder">
+                    <p>输入cBot参数并点击"分析风险"查看详细分析结果</p>
+                </div>
+            </div>
+
+        </main>
+
+
+        <!-- 调试面板模态框 -->
+        <div class="debug-modal-overlay" v-if="showDebugPanel" @click="closeOnOverlayClick">
+            <div class="debug-modal-content" @click.stop>
+                <div class="debug-modal-header">
+                    <h2>🔧 调试分析面板</h2>
+                    <div class="debug-modal-controls">
+                        <button class="debug-btn secondary" @click="refreshDebugData" 
+                                :disabled="calculationResults.totalVolume === 0"
+                                title="刷新调试数据">
+                            🔄 刷新数据
+                        </button>
+                        <button class="debug-btn secondary" @click="exportDebugData" 
+                                :disabled="calculationResults.totalVolume === 0"
+                                title="导出调试数据">
+                            📊 导出数据
+                        </button>
+                        <button class="debug-modal-close" @click="toggleDebugPanel" title="关闭调试面板">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+                
+
+                <!-- 智能网格布局容器 -->
+                <div class="debug-grid-container">
+                    
+                    <!-- 左侧主要区域：图表分析 -->
+                    <div class="debug-primary-section">
+                        <div class="debug-card priority-critical">
+                            <div class="card-header collapsible" @click="toggleSection('charts')">
+                                <h3>📊 图表分析</h3>
+                                <span class="toggle-icon" :class="{ 'collapsed': collapsedSections.charts }">▼</span>
+                            </div>
+                            <div class="card-content" v-show="!collapsedSections.charts">
+                                <div class="charts-grid">
+                                    <!-- 仓位构建图表 -->
+                                    <div class="chart-item">
+                                        <h4>仓位构建分析</h4>
+                                        <div id="positionChart" class="chart-container-echarts"></div>
+                                    </div>
+
+                                    <!-- 回撤风险图表 -->
+                                    <div class="chart-item">
+                                        <h4>回撤风险曲线</h4>
+                                        <div id="drawdownChart" class="chart-container-echarts"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右侧次要区域：计算详情和控制 -->
+                    <div class="debug-secondary-section">
+                        <!-- 计算过程监控 -->
+                        <div class="debug-card priority-important" v-if="debugInfo.calculationSteps.length > 0">
+                            <div class="card-header collapsible" @click="toggleSection('calculation')">
+                                <h3>📋 计算详情</h3>
+                                <span class="toggle-icon" :class="{ 'collapsed': collapsedSections.calculation }">▼</span>
+                            </div>
+                            <div class="card-content" v-show="!collapsedSections.calculation">
+                                <div class="debug-summary-compact">
+                                    <div class="summary-item">
+                                        <span class="label">参考价格:</span>
+                                        <span class="value">{{ debugInfo.referencePrice.toFixed(5) }}</span>
+                                    </div>
+                                    <div class="summary-item" v-if="debugInfo.potentialErrors.length > 0">
+                                        <span class="label error">⚠️ 问题:</span>
+                                        <span class="value error">{{ debugInfo.potentialErrors.length }}个</span>
+                                    </div>
+                                </div>
+                                
+                                <div v-if="debugInfo.potentialErrors.length > 0" class="error-list-compact">
+                                    <div v-for="error in debugInfo.potentialErrors" :key="error" class="error-item-compact">
+                                        ⚠️ {{ error }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 快捷操作面板 -->
+                        <div class="debug-card priority-optional">
+                            <div class="card-header collapsible" @click="toggleSection('actions')">
+                                <h3>⚡ 快捷操作</h3>
+                                <span class="toggle-icon" :class="{ 'collapsed': collapsedSections.actions }">▼</span>
+                            </div>
+                            <div class="card-content" v-show="!collapsedSections.actions">
+                                <div class="action-buttons-grid">
+                                    <button class="action-btn" @click="fullscreenChart('position')" title="仓位图表全屏">
+                                        🔍 仓位图表
+                                    </button>
+                                    <button class="action-btn" @click="fullscreenChart('drawdown')" title="回撤图表全屏">
+                                        🔍 回撤图表
+                                    </button>
+                                    <button class="action-btn" @click="resetChartZoom" title="重置图表缩放">
+                                        🔄 重置缩放
+                                    </button>
+                                    <button class="action-btn" @click="toggleChartAnimation" title="切换图表动画">
+                                        {{ chartAnimationEnabled ? '⏸️ 关闭动画' : '▶️ 开启动画' }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 底部全宽区域：公式验证 -->
+                    <div class="debug-fullwidth-section">
+                        <div class="debug-card priority-important" v-if="formulaVerification">
+                            <div class="card-header collapsible" @click="toggleSection('verification')">
+                                <h3>🧮 公式验证</h3>
+                                <span class="toggle-icon" :class="{ 'collapsed': collapsedSections.verification }">▼</span>
+                            </div>
+                            <div class="card-content" v-show="!collapsedSections.verification">
+                                <div class="verification-table-responsive">
+                                    <table class="debug-table-improved">
+                                        <thead>
+                                            <tr>
+                                                <th>计算项目</th>
+                                                <th>公式</th>
+                                                <th>结果</th>
+                                                <th>状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr v-for="item in formulaVerification" :key="item.name">
+                                                <td class="item-name">{{ item.name }}</td>
+                                                <td class="formula-cell">{{ item.formula }}</td>
+                                                <td class="result-cell">{{ item.result }}</td>
+                                                <td class="status-cell">
+                                                    <span :class="item.status" class="status-badge-improved">
+                                                        {{ item.status === 'ok' ? '✅ 正常' : '⚠️ 异常' }}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="js/utils/calculations.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
